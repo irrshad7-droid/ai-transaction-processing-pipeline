@@ -31,3 +31,55 @@ async def upload_csv(
         job_id=job.id,
         status=job.status.value
     )
+
+from fastapi import Query
+from typing import Optional
+from sqlalchemy.ext.asyncio import AsyncSession
+from src.db.database import get_db
+from sqlalchemy import select, func
+from src.db.models import Job
+from src.schemas.responses import JobSummaryResponse
+from pydantic import BaseModel
+
+class PaginatedJobListResponse(BaseModel):
+    items: list[JobSummaryResponse]
+    total: int
+    page: int
+    size: int
+
+@router.get("", response_model=PaginatedJobListResponse)
+async def list_jobs(
+    status: Optional[str] = None,
+    page: int = Query(1, ge=1, description="Page number"),
+    size: int = Query(50, ge=1, le=1000, description="Items per page"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    List all jobs with pagination. Supports filtering via ?status= query parameter.
+    """
+    base_query = select(Job)
+    if status:
+        base_query = base_query.where(Job.status == status)
+        
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar_one()
+        
+    paginated_query = base_query.order_by(Job.created_at.desc()).offset((page - 1) * size).limit(size)
+    result = await db.execute(paginated_query)
+    jobs = result.scalars().all()
+    
+    return PaginatedJobListResponse(
+        items=[
+            JobSummaryResponse(
+                job_id=j.id,
+                status=j.status.value,
+                filename=j.filename,
+                row_count_raw=j.row_count_raw,
+                created_at=j.created_at.isoformat()
+            ) for j in jobs
+        ],
+        total=total,
+        page=page,
+        size=size
+    )

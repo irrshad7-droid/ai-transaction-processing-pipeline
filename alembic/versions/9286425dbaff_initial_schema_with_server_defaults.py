@@ -1,8 +1,8 @@
-"""Initial schema
+"""Initial schema with server defaults
 
-Revision ID: d52390b730ee
+Revision ID: 9286425dbaff
 Revises: 
-Create Date: 2026-06-30 17:34:41.651458
+Create Date: 2026-06-30 20:15:53.083789
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = 'd52390b730ee'
+revision: str = '9286425dbaff'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -24,23 +24,33 @@ def upgrade() -> None:
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('status', sa.Enum('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'PARTIAL_SUCCESS', name='jobstatus'), nullable=False),
     sa.Column('filename', sa.String(), nullable=False),
+    sa.Column('row_count_raw', sa.Integer(), nullable=True),
+    sa.Column('row_count_clean', sa.Integer(), nullable=True),
     sa.Column('summary', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('error_message', sa.String(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('transactions',
-    sa.Column('id', sa.UUID(), nullable=False),
+    sa.Column('id', sa.UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
     sa.Column('job_id', sa.UUID(), nullable=False),
-    sa.Column('account_id', sa.String(), nullable=False),
-    sa.Column('amount', sa.Float(), nullable=False),
+    sa.Column('txn_id', sa.String(), nullable=True),
     sa.Column('date', sa.String(), nullable=True),
-    sa.Column('description', sa.String(), nullable=False),
+    sa.Column('merchant', sa.String(), nullable=True),
+    sa.Column('amount', sa.Float(), nullable=False),
+    sa.Column('currency', sa.String(), nullable=True),
+    sa.Column('status', sa.String(), nullable=True),
     sa.Column('category', sa.String(), nullable=True),
-    sa.Column('is_anomaly', sa.Boolean(), nullable=False),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('account_id', sa.String(), nullable=False),
+    sa.Column('notes', sa.String(), nullable=True),
+    sa.Column('is_anomaly', sa.Boolean(), server_default=sa.text('false'), nullable=False),
+    sa.Column('anomaly_reason', sa.String(), nullable=True),
+    sa.Column('llm_category', sa.String(), nullable=True),
+    sa.Column('llm_raw_response', sa.String(), nullable=True),
+    sa.Column('llm_failed', sa.Boolean(), server_default=sa.text('false'), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.ForeignKeyConstraint(['job_id'], ['jobs.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )

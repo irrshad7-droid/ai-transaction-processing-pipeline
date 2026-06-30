@@ -41,13 +41,26 @@ LLM Service
 
 docker compose up --build
 
-## API
+## API Endpoints
 
-POST /jobs/upload
+1. **`POST /api/v1/jobs/upload`**: Upload CSV file for asynchronous processing
+2. **`GET /api/v1/jobs`**: List paginated jobs (supports `?status=...`)
+3. **`GET /api/v1/jobs/{job_id}/status`**: Get job processing status
+4. **`GET /api/v1/jobs/{job_id}/results`**: Get final job summary and paginated list of parsed transactions
 
-GET /jobs/{job_id}
+### Example Usage
 
-GET /jobs/{job_id}/transactions
+```bash
+# Upload data
+curl -X POST http://localhost:8000/api/v1/jobs/upload \
+  -F "file=@sample_data/transactions.csv"
+
+# Check Job Status
+curl http://localhost:8000/api/v1/jobs/<JOB_ID>/status
+
+# View Categorized Results (with pagination & anomaly filter)
+curl "http://localhost:8000/api/v1/jobs/<JOB_ID>/results?is_anomaly=true&page=1&size=50"
+```
 
 ## Design Decisions
 

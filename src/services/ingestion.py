@@ -46,34 +46,46 @@ class IngestionService:
             if not reader.fieldnames:
                 raise ValueError("CSV is empty or missing headers")
 
-            required_columns = {"account_id", "amount", "date", "description"}
+            required_columns = {"txn_id", "date", "merchant", "amount", "currency", "status", "category", "account_id", "notes"}
             if not required_columns.issubset(set(reader.fieldnames)):
                 missing = required_columns - set(reader.fieldnames)
                 raise ValueError(f"CSV missing required columns: {missing}")
 
-            # Define a generator expression so we don't load all rows into memory
+            row_count = 0
             def record_generator():
+                nonlocal row_count
                 for row in reader:
+                    row_count += 1
+                    
+                    # We must parse amount to float for asyncpg. 
+                    # The assignment asks the worker to do this, but since we heavily optimized 
+                    # with bulk COPY, we do a basic strip here so asyncpg doesn't crash on $ symbols.
+                    raw_amt = str(row.get("amount", "0")).replace("$", "").replace(",", "").strip()
                     try:
-                        amt = float(row["amount"])
+                        amt = float(raw_amt)
                     except (ValueError, TypeError):
-                        amt = 0.0 # Standardize bad data, worker can flag this later
+                        amt = 0.0
+                        
                     yield (
                         job.id,
-                        row["account_id"],
-                        amt,
+                        row.get("txn_id", ""),
                         row.get("date", ""),
-                        row["description"]
+                        row.get("merchant", ""),
+                        amt,
+                        row.get("currency", ""),
+                        row.get("status", ""),
+                        row.get("category", "") or None,  # Treat empty string as NULL for DB
+                        row.get("account_id", ""),
+                        row.get("notes", "")
                     )
             
-            # asyncpg copy_records_to_table accepts a synchronous iterator.
-            # It reads chunks and streams them to the DB socket asynchronously.
             await asyncpg_conn.copy_records_to_table(
                 "transactions",
-                columns=["job_id", "account_id", "amount", "date", "description"],
+                columns=["job_id", "txn_id", "date", "merchant", "amount", "currency", "status", "category", "account_id", "notes"],
                 records=record_generator()
             )
             
+            job.row_count_raw = row_count
             await self.db.commit()
             logger.info("upload_successful", job_id=str(job.id))
             return job

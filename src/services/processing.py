@@ -30,19 +30,44 @@ class ProcessingService:
         
         try:
             # 2. Transaction Cleaning
-            # Trims whitespace from descriptions and dates in a single bulk operation
+            # Assignment requires: Normalise dates, Uppercase status, Fill missing categories, Remove duplicates
+            
+            # Remove exact duplicate rows first
+            dedup_query = text("""
+                DELETE FROM transactions 
+                WHERE job_id = :job_id AND ctid NOT IN (
+                    SELECT min(ctid) 
+                    FROM transactions 
+                    WHERE job_id = :job_id 
+                    GROUP BY txn_id, date, merchant, amount, currency, status, category, account_id, notes
+                )
+            """)
+            await self.db.execute(dedup_query, {"job_id": job_id})
+            
+            # Update clean count
+            count_query = text("SELECT count(*) FROM transactions WHERE job_id = :job_id")
+            clean_count_res = await self.db.execute(count_query, {"job_id": job_id})
+            job.row_count_clean = clean_count_res.scalar()
+            
+            # Apply cleaning transformations
             clean_query = text("""
                 UPDATE transactions
-                SET description = trim(description),
-                    date = trim(date)
+                SET merchant = trim(merchant),
+                    status = upper(trim(status)),
+                    category = COALESCE(nullif(trim(category), ''), 'Uncategorised'),
+                    date = CASE 
+                        WHEN date LIKE '%/%/%' THEN to_char(to_date(date, 'YYYY/MM/DD'), 'YYYY-MM-DD')
+                        WHEN date LIKE '%-%-%' THEN to_char(to_date(date, 'DD-MM-YYYY'), 'YYYY-MM-DD')
+                        ELSE trim(date) 
+                    END
                 WHERE job_id = :job_id
             """)
             await self.db.execute(clean_query, {"job_id": job_id})
             logger.info("transactions_cleaned", job_id=job_id_str)
             
-            # 3. Anomaly Detection (3x Account Median)
-            # Uses a CTE to compute the median per account instantly using percentile_cont,
-            # then joins back to flag anomalies. This is executed purely in C on the DB server.
+            # 3. Anomaly Detection
+            # Rule 1: 3x Account Median
+            # Rule 2: USD currency for domestic merchants (Swiggy, Ola, IRCTC)
             anomaly_query = text("""
                 WITH account_medians AS (
                     SELECT 
@@ -53,11 +78,19 @@ class ProcessingService:
                     GROUP BY account_id
                 )
                 UPDATE transactions t
-                SET is_anomaly = (t.amount > (3 * am.median_amount))
+                SET is_anomaly = CASE 
+                        WHEN t.amount > (3 * am.median_amount) AND am.median_amount > 0 THEN true
+                        WHEN upper(trim(t.currency)) = 'USD' AND t.merchant ILIKE ANY(ARRAY['%Swiggy%', '%Ola%', '%IRCTC%']) THEN true
+                        ELSE false 
+                    END,
+                    anomaly_reason = CASE
+                        WHEN t.amount > (3 * am.median_amount) AND am.median_amount > 0 THEN 'Amount > 3x Median'
+                        WHEN upper(trim(t.currency)) = 'USD' AND t.merchant ILIKE ANY(ARRAY['%Swiggy%', '%Ola%', '%IRCTC%']) THEN 'USD for Domestic Merchant'
+                        ELSE NULL
+                    END
                 FROM account_medians am
                 WHERE t.job_id = :job_id 
-                  AND t.account_id = am.account_id
-                  AND am.median_amount > 0;
+                  AND t.account_id = am.account_id;
             """)
             await self.db.execute(anomaly_query, {"job_id": job_id})
             logger.info("anomaly_detection_completed", job_id=job_id_str)
@@ -70,50 +103,70 @@ class ProcessingService:
             # Since this is a background job, we can process all transactions.
             # In a real system with millions of rows, we'd use an async generator.
             uncategorized_query = text("""
-                SELECT id, amount, description 
+                SELECT id, merchant, notes 
                 FROM transactions 
-                WHERE job_id = :job_id AND category IS NULL
+                WHERE job_id = :job_id AND category = 'Uncategorised'
             """)
             result = await self.db.execute(uncategorized_query, {"job_id": job_id})
             rows = result.fetchall()
             
-            transactions_to_categorize = [{"id": r.id, "amount": r.amount, "description": r.description} for r in rows]
+            transactions_to_categorize = [{"id": r.id, "merchant": r.merchant, "notes": r.notes} for r in rows]
             
             # Process in batches of 50
             BATCH_SIZE = 50
             for i in range(0, len(transactions_to_categorize), BATCH_SIZE):
                 batch = transactions_to_categorize[i:i + BATCH_SIZE]
-                categories = await llm_service.categorize_transactions(batch)
+                llm_response = await llm_service.categorize_transactions(batch)
+                categories = llm_response.get("categories", {})
+                llm_failed = llm_response.get("llm_failed", False)
                 
-                # Update database with categorized values
-                # We do this one by one or via case statements. Since batch is small, direct parameter binding is fine.
-                for txn_id, category in categories.items():
-                    update_cat_query = text("""
-                        UPDATE transactions SET category = :category WHERE id = :id
-                    """)
-                    await self.db.execute(update_cat_query, {"category": category, "id": txn_id})
+                # Update database with categorized values or llm_failed status
+                for txn in batch:
+                    txn_id = txn["id"]
+                    category = categories.get(str(txn_id))
+                    
+                    if llm_failed or not category:
+                        # If LLM failed, we mark the row as llm_failed = True but leave category as Uncategorised
+                        update_fail_query = text("UPDATE transactions SET llm_failed = true WHERE id = :id")
+                        await self.db.execute(update_fail_query, {"id": txn_id})
+                    else:
+                        update_cat_query = text("UPDATE transactions SET llm_category = :category, category = :category WHERE id = :id")
+                        await self.db.execute(update_cat_query, {"category": category, "id": txn_id})
                 
-                logger.info("llm_batch_categorized", job_id=job_id_str, batch_start=i)
+                logger.info("llm_batch_processed", job_id=job_id_str, batch_start=i, llm_failed=llm_failed)
                 
             # 5. LLM Summarization
-            # Gather aggregate statistics instead of raw rows to save tokens and prevent context bloat
+            # Gather aggregate statistics: total spend by currency, top 3 merchants, anomaly count
             stats_query = text("""
                 SELECT 
-                    COUNT(*) as total_txns,
-                    SUM(amount) as total_amount,
-                    SUM(CASE WHEN is_anomaly THEN 1 ELSE 0 END) as anomaly_count,
-                    COUNT(DISTINCT category) as unique_categories
+                    currency,
+                    SUM(amount) as total_amount
                 FROM transactions
                 WHERE job_id = :job_id
+                GROUP BY currency
             """)
-            stats_result = await self.db.execute(stats_query, {"job_id": job_id})
-            stats_row = stats_result.fetchone()
+            currency_stats_res = await self.db.execute(stats_query, {"job_id": job_id})
+            currency_stats = {row.currency: row.total_amount for row in currency_stats_res.fetchall()}
+            
+            merchant_query = text("""
+                SELECT merchant, SUM(amount) as total
+                FROM transactions
+                WHERE job_id = :job_id
+                GROUP BY merchant
+                ORDER BY total DESC
+                LIMIT 3
+            """)
+            merchant_res = await self.db.execute(merchant_query, {"job_id": job_id})
+            top_merchants = [row.merchant for row in merchant_res.fetchall()]
+            
+            anomaly_count_query = text("SELECT COUNT(*) FROM transactions WHERE job_id = :job_id AND is_anomaly = true")
+            anomaly_res = await self.db.execute(anomaly_count_query, {"job_id": job_id})
+            anomaly_count = anomaly_res.scalar()
             
             stats_dict = {
-                "total_transactions": stats_row.total_txns,
-                "total_amount_processed": stats_row.total_amount,
-                "total_anomalies_detected": stats_row.anomaly_count,
-                "unique_categories_used": stats_row.unique_categories
+                "total_spend_by_currency": currency_stats,
+                "top_3_merchants": top_merchants,
+                "anomaly_count": anomaly_count
             }
             
             summary = await llm_service.generate_summary(stats_dict)

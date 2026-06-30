@@ -1,0 +1,12 @@
+txn_id,date,merchant,amount,currency,status,category,account_id,notes
+TXN-1,12-05-2024,Amazon,$45.50,usd,success,,ACC-101,Regular purchase
+TXN-2,2024/05/13,Uber,15.00,inr,PENDING,Transport,ACC-101,
+TXN-3,14-05-2024,Swiggy,200.0,usd,SUCCESS,,ACC-102,SUSPICIOUS
+TXN-4,2024/05/15,Netflix,$15.99,usd,success,Entertainment,ACC-101,
+TXN-4,2024/05/15,Netflix,$15.99,usd,success,Entertainment,ACC-101,Duplicate?
+TXN-5,16-05-2024,Apple Store,999.00,USD,FAILED,,ACC-102,
+TXN-6,17-05-2024,Ola,350.00,usd,success,,ACC-103,
+TXN-7,2024/05/18,IRCTC,1500.00,USD,success,,ACC-104,
+TXN-8,19-05-2024,Local Bakery,12.00,inr,SUCCESS,,ACC-101,
+TXN-9,2024/05/20,Unknown Store,99999.00,inr,SUCCESS,,ACC-101,Extremely large outlier
+TXN-10,21-05-2024,Spotify,$9.99,USD,pending,,ACC-103,
