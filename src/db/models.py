@@ -9,7 +9,9 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Enum as SQLEnum,
-    Index
+    Index,
+    text,
+    func
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -25,14 +27,14 @@ class JobStatus(str, enum.Enum):
 class Job(Base):
     __tablename__ = "jobs"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
     status = Column(SQLEnum(JobStatus), nullable=False, default=JobStatus.PENDING)
     filename = Column(String, nullable=False)
     summary = Column(JSONB, nullable=True)
     error_message = Column(String, nullable=True)
     
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
     transactions = relationship("Transaction", back_populates="job", cascade="all, delete-orphan")
@@ -40,7 +42,7 @@ class Job(Base):
 class Transaction(Base):
     __tablename__ = "transactions"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
     job_id = Column(UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
     
     account_id = Column(String, nullable=False)
@@ -50,10 +52,10 @@ class Transaction(Base):
     
     # Enrichment fields
     category = Column(String, nullable=True)
-    is_anomaly = Column(Boolean, nullable=False, default=False)
+    is_anomaly = Column(Boolean, nullable=False, server_default=text("false"))
     
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
     job = relationship("Job", back_populates="transactions")

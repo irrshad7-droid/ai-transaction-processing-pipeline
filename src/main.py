@@ -32,8 +32,11 @@ app = FastAPI(
     redoc_url=None, # Disable redoc if unused to save resources
 )
 
+from src.api.routers import health, jobs
+
 # Register routers
 app.include_router(health.router, prefix="/api/v1")
+app.include_router(jobs.router, prefix="/api/v1")
 
 if __name__ == "__main__":
     import uvicorn
