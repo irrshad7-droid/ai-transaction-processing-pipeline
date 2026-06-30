@@ -20,4 +20,5 @@ celery_app.conf.update(
     # Acks late ensures tasks are not lost if the worker crashes mid-execution.
     task_acks_late=True,
     worker_prefetch_multiplier=1, # Ensures fair distribution among workers
+    broker_connection_retry_on_startup=True, # Required for Celery 5.3+
 )

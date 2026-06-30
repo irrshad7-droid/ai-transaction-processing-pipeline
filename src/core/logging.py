@@ -32,3 +32,10 @@ def setup_logging(log_level: str = "INFO") -> None:
         stream=sys.stdout,
         level=getattr(logging, log_level.upper(), logging.INFO),
     )
+
+    # Force Uvicorn and FastAPI loggers to propagate up to our root JSON logger
+    # Why: Without this, Uvicorn outputs plain text access logs, breaking ELK/Datadog parsing.
+    for logger_name in ["uvicorn", "uvicorn.error", "uvicorn.access", "fastapi"]:
+        logging_logger = logging.getLogger(logger_name)
+        logging_logger.handlers.clear()
+        logging_logger.propagate = True

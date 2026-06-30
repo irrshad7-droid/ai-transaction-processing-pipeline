@@ -9,6 +9,8 @@ import structlog
 setup_logging(settings.LOG_LEVEL)
 logger = structlog.get_logger(__name__)
 
+from src.db.database import engine
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -18,6 +20,7 @@ async def lifespan(app: FastAPI):
     logger.info("startup_event", environment=settings.ENVIRONMENT)
     yield
     logger.info("shutdown_event")
+    await engine.dispose()
 
 # Initialize FastAPI application
 app = FastAPI(

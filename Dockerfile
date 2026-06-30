@@ -7,22 +7,16 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install system dependencies
-# gcc and libpq-dev are required for building psycopg2 (used by Celery/Alembic if needed)
-RUN apt-get update \
-    && apt-get install -y gcc libpq-dev \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source code
-COPY . .
-
-# Create a non-root user and switch to it for security
+# Create a non-root user for security before copying code
 RUN adduser --disabled-password --gecos '' appuser
+
+# Copy source code with correct ownership
+COPY --chown=appuser:appuser . .
+
 USER appuser
 
 # Expose port (can be overridden)
