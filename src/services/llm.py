@@ -96,3 +96,10 @@ class LLMService:
                 "key_insights": "Failed to generate LLM summary.",
                 "risk_assessment": "Unknown"
             }
+
+    async def close(self):
+        """
+        Closes the underlying httpx client to prevent 'Event loop is closed' errors 
+        when the asyncio event loop shuts down.
+        """
+        await self.client.close()

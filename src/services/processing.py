@@ -120,6 +120,9 @@ class ProcessingService:
             job.summary = summary
             logger.info("llm_summary_generated", job_id=job_id_str)
             
+            # Clean up LLM client
+            await llm_service.close()
+            
             # 6. Mark job as COMPLETED
             job.status = JobStatus.COMPLETED
             await self.db.commit()
