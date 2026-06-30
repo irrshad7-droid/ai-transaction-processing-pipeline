@@ -12,14 +12,26 @@ def health_check_task(self):
     logger.info("health_check_task_executed")
     return {"status": "ok"}
 
-@celery_app.task(bind=True, max_retries=3)
+import asyncio
+from src.db.database import AsyncSessionLocal
+from src.services.processing import ProcessingService
+
+@celery_app.task(bind=True, max_retries=3, autoretry_for=(Exception,), retry_backoff=True)
 def process_job_task(self, job_id: str):
     """
     Main orchestrator task for processing an uploaded CSV file.
     Why: Handles the asynchronous pipeline (clean -> analyze -> llm -> summarize).
-    Currently just a placeholder that logs the job_id.
+    Uses asyncio.run to execute the async ProcessingService within the synchronous Celery worker.
     """
     logger.info("processing_job_started", job_id=job_id)
-    # TODO: Implement Milestone 4 logic here
-    logger.info("processing_job_completed", job_id=job_id)
-    return {"job_id": job_id, "status": "COMPLETED"}
+    try:
+        asyncio.run(_run_processing(job_id))
+    except Exception as e:
+        logger.error("processing_job_failed", job_id=job_id, error=str(e), exc_info=True)
+        # Celery will retry automatically due to autoretry_for
+        raise
+
+async def _run_processing(job_id: str):
+    async with AsyncSessionLocal() as db:
+        service = ProcessingService(db)
+        await service.process_job(job_id)
