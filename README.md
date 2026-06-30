@@ -37,6 +37,10 @@ Summary Generation
    ↓
 PostgreSQL
 
+## Architecture Diagram
+
+![Architecture Diagram](docs/architecture.png)
+
 ## Tech Stack
 
 - Python 3.11
