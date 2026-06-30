@@ -23,6 +23,8 @@ class Settings(BaseSettings):
 
     # LLM
     LLM_API_KEY: str
+    LLM_BASE_URL: str | None = None
+    LLM_MODEL: str = "gpt-3.5-turbo"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

@@ -62,7 +62,65 @@ class ProcessingService:
             await self.db.execute(anomaly_query, {"job_id": job_id})
             logger.info("anomaly_detection_completed", job_id=job_id_str)
             
-            # 4. Mark job as COMPLETED (For Milestone 4 scope)
+            # 4. LLM Categorization (Batching)
+            # Fetch uncategorized transactions in batches of 50 to avoid token limits
+            from src.services.llm import LLMService
+            llm_service = LLMService()
+            
+            # Since this is a background job, we can process all transactions.
+            # In a real system with millions of rows, we'd use an async generator.
+            uncategorized_query = text("""
+                SELECT id, amount, description 
+                FROM transactions 
+                WHERE job_id = :job_id AND category IS NULL
+            """)
+            result = await self.db.execute(uncategorized_query, {"job_id": job_id})
+            rows = result.fetchall()
+            
+            transactions_to_categorize = [{"id": r.id, "amount": r.amount, "description": r.description} for r in rows]
+            
+            # Process in batches of 50
+            BATCH_SIZE = 50
+            for i in range(0, len(transactions_to_categorize), BATCH_SIZE):
+                batch = transactions_to_categorize[i:i + BATCH_SIZE]
+                categories = await llm_service.categorize_transactions(batch)
+                
+                # Update database with categorized values
+                # We do this one by one or via case statements. Since batch is small, direct parameter binding is fine.
+                for txn_id, category in categories.items():
+                    update_cat_query = text("""
+                        UPDATE transactions SET category = :category WHERE id = :id
+                    """)
+                    await self.db.execute(update_cat_query, {"category": category, "id": txn_id})
+                
+                logger.info("llm_batch_categorized", job_id=job_id_str, batch_start=i)
+                
+            # 5. LLM Summarization
+            # Gather aggregate statistics instead of raw rows to save tokens and prevent context bloat
+            stats_query = text("""
+                SELECT 
+                    COUNT(*) as total_txns,
+                    SUM(amount) as total_amount,
+                    SUM(CASE WHEN is_anomaly THEN 1 ELSE 0 END) as anomaly_count,
+                    COUNT(DISTINCT category) as unique_categories
+                FROM transactions
+                WHERE job_id = :job_id
+            """)
+            stats_result = await self.db.execute(stats_query, {"job_id": job_id})
+            stats_row = stats_result.fetchone()
+            
+            stats_dict = {
+                "total_transactions": stats_row.total_txns,
+                "total_amount_processed": stats_row.total_amount,
+                "total_anomalies_detected": stats_row.anomaly_count,
+                "unique_categories_used": stats_row.unique_categories
+            }
+            
+            summary = await llm_service.generate_summary(stats_dict)
+            job.summary = summary
+            logger.info("llm_summary_generated", job_id=job_id_str)
+            
+            # 6. Mark job as COMPLETED
             job.status = JobStatus.COMPLETED
             await self.db.commit()
             logger.info("job_status_updated", job_id=job_id_str, status="COMPLETED")

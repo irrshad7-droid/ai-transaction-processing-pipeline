@@ -32,6 +32,30 @@ def process_job_task(self, job_id: str):
         raise
 
 async def _run_processing(job_id: str):
-    async with AsyncSessionLocal() as db:
-        service = ProcessingService(db)
-        await service.process_job(job_id)
+    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+    from src.core.config import settings
+    
+    # Create an isolated engine per task to ensure connection pool binds 
+    # strictly to the new event loop created by asyncio.run()
+    task_engine = create_async_engine(
+        settings.async_database_url,
+        echo=False,
+        future=True,
+        pool_size=5,
+        max_overflow=10,
+    )
+    
+    TaskSessionLocal = async_sessionmaker(
+        bind=task_engine, 
+        class_=AsyncSession, 
+        expire_on_commit=False,
+        autoflush=False
+    )
+    
+    try:
+        async with TaskSessionLocal() as db:
+            service = ProcessingService(db)
+            await service.process_job(job_id)
+    finally:
+        # Ensure the engine and its connection pool are closed before the event loop dies
+        await task_engine.dispose()
