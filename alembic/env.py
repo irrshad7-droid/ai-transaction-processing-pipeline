@@ -8,6 +8,7 @@ from alembic import context
 # Import our models and settings
 from src.db.database import Base
 from src.core.config import settings
+import src.db.models  # Required for Alembic to detect models
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
