@@ -18,12 +18,24 @@ A production-ready backend pipeline for processing large CSV transaction dataset
 ## Architecture
 
 Client
-   │
+   ↓
 FastAPI
-   │
-PostgreSQL <── Celery Worker ── Redis
-   │
-LLM Service
+   ↓
+Create Job
+   ↓
+Redis Queue
+   ↓
+Celery Worker
+   ↓
+Data Cleaning
+   ↓
+Anomaly Detection
+   ↓
+LLM Categorization
+   ↓
+Summary Generation
+   ↓
+PostgreSQL
 
 ## Tech Stack
 
